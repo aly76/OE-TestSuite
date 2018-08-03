@@ -4,12 +4,12 @@
 % Execution time is approx. 1 minute per 10,000 trials, tested on Intel Core m3-6Y30
 % Alan Ly, 2018
 
-clear all; clc;
+clear all; close all; clc;
 
 % Input parameters
-nTrials = 10000;
-saveDirectory = 'C:\OpenEphys\Experiment2';
-nFolders = 20;
+nTrials = 500;
+saveDirectory = 'C:\OpenEphys\Experiment3-1000trials\02082018_NaN';
+nFolders = 2;
 save2xls = false; % Output results to excel, adds overhead to execution time 
 
 % Preallocate memory for arrays
@@ -31,6 +31,10 @@ networkEventNo = 1;
 TTL_eventNo = 1;
 photodiode_eventNo = 1; 
 errorNo = 1;
+
+%Initialise variables
+rising_IndexParity = 1; 
+falling_IndexParity = 0;
 
 % Determine the path of each sub-folder
 dirInfo = dir(saveDirectory);
@@ -117,7 +121,8 @@ for z = 1:length(pathArray) % Repeat code below for each sub-directory
     end 
     
     % Select timestamps of network events corresponding to trial start and complete
-    j = 1; 
+    j = 1; % Counter used to increment through msgs{j}
+    jLog = 1; % used to log 'j' when a trial is found  
     for i = 1:nTrials
         trialId = num2str(i);
         trialStartFound = 0;
@@ -128,17 +133,20 @@ for z = 1:length(pathArray) % Repeat code below for each sub-directory
             if (~isempty(findTrialStart))
                 networkEvents(networkEventNo) = results(j,2);
                 networkEventNo = networkEventNo + 1; 
-                trialStartFound = 1; 
+                trialStartFound = 1;
+                jLog = j; 
             end
             if (~isempty(findTrialComplete))
                 networkEvents(networkEventNo) = results(j,2);
                 networkEventNo = networkEventNo + 1; 
                 trialCompleteFound = 1;
+                jLog = j; 
             end
             j = j+1;
             if (j > length(msgs)) % Fail-safe breaks out of while loop if trial not found
                 trialStartFound = 1;
-                trialCompleteFound = 1; 
+                trialCompleteFound = 1;
+                j = jLog; % Reset the msg{j} counter to the last known 'hit'
                 % Error info here e.g. numTrial missing
                 e(errorNo).Description = 'Trial not found'; 
                 e(errorNo).Subfolder = pathArray{z};
@@ -149,7 +157,8 @@ for z = 1:length(pathArray) % Repeat code below for each sub-directory
     end 
 
     % Sort digital pulses by channel number
-%     networkEventFlag = 1; 
+%     networkEventFlag = 1;
+    TTL_rising_flag = 0; % Initialise TTL_rising_flag to prevent error when TTL is missing 
     for i = 1:size(results,1)
 
         % Separate Daq TTL's (channel #1) into individual array
@@ -157,24 +166,28 @@ for z = 1:length(pathArray) % Repeat code below for each sub-directory
             
             TTL(TTL_eventNo) = results(i,2);
             
-            if ((mod(TTL_eventNo, 2) == 1) && results(i,3) ~= 1) %Check for rising edge on odd TTL's               
-                e(errorNo).Description = 'TTL mismatch (rising)';
+            if ((mod(TTL_eventNo, 2) == rising_IndexParity) && results(i,3) ~= 1) %Check for TTL's with rising edge              
+                e(errorNo).Description = 'Missing TTL (rising)';
                 e(errorNo).Subfolder = pathArray{z}; 
                 e(errorNo).TTL = TTL_eventNo; 
                 errorNo = errorNo + 1;
-            elseif  ((mod(TTL_eventNo, 2) == 0) && results(i,3) ~= 0) %Check for falling edge on even TTL's
-                e(errorNo).Description = 'TTL mismatch (falling)';
+                rising_IndexParity = ~rising_IndexParity; % flip the parity (odd or even) of the index on which rising edges are looked for in TTL
+                falling_IndexParity = ~falling_IndexParity; 
+            elseif  ((mod(TTL_eventNo, 2) == falling_IndexParity) && results(i,3) ~= 0) %Check for TTL's with falling edge
+                e(errorNo).Description = 'Missing TTL (falling)';
                 e(errorNo).Subfolder = pathArray{z}; 
                 e(errorNo).TTL = TTL_eventNo; 
                 errorNo = errorNo + 1;
+                rising_IndexParity = ~rising_IndexParity; 
+                falling_IndexParity = ~falling_IndexParity;
             end 
             
-            if (results(i,3) == 1)
+            if (results(i,3) == 1) % eventId == 1 denotes rising edge
                 TTL_rising_flag = 1;
             end
             
             TTL_eventNo = TTL_eventNo + 1;
-                      
+
         end
         
         %Separate photodiode digital pulses (channel #2) into individual array.
@@ -222,9 +235,9 @@ for z = 1:length(pathArray) % Repeat code below for each sub-directory
     
     %Conditions for executing code that generates outputs
     finalFolder = z == length(pathArray); 
-    sameLength = length(networkEvents) == length(TTL);
+    sameLength = length(find(networkEvents ~= 0)) == length(find(TTL ~= 0)); 
     errorless = isempty(e(1).Description); 
-
+    outputState = 0; 
     if (finalFolder && sameLength && errorless) %Only compute outputs if the outer loop is on the final folder 
 
         %Caculate and plot message-TTL latencies
@@ -271,9 +284,15 @@ for z = 1:length(pathArray) % Repeat code below for each sub-directory
             disp('Success: Photodiode pulses arrived in order'); 
         else 
             disp('Warning: Photodiode pulses did not arrive in order');
-        end 
+        end  
+        
+        outputState = 1; 
     end 
-
+    
+    if (~outputState && finalFolder) % give user feedback in the command window 
+        disp('Errors encountered...plots will not be generated');
+    end 
+    
     if (save2xls) 
         if (exist('events.xlsx', 'file') ~= 0) 
             delete events.xlsx
