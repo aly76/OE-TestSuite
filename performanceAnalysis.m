@@ -7,22 +7,22 @@
 clear all; close all; clc;
 
 % Input parameters
-nTrials = 500;
-nFolders = 2;
-saveDirectory = 'C:\OpenEphys\Experiment3-1000trials\02082018_NaN(4)';
+nTrials = 1000;
+nFolders = 100;
+saveDirectory = 'C:\OpenEphys\Experiment5-long\08082018'; % Parent folder under which sub-folders are located
 save2xls = false; % Output results to excel, adds overhead to execution time 
 importNSData = true; % Import Neurostim data and perform clock sync 
-nsFilename = 'results02082018_NaN(4).mat'; % Filename of .mat file containing Neurostim data
+nsFilename = 'results08082018.mat'; % Filename of .mat file containing Neurostim data
 
 % Preallocate memory for arrays
 networkEvents = zeros(2*nTrials*nFolders,1); % seconds
 TTL = zeros(2*nTrials*nFolders,1); % seconds
 photodiode = zeros(nTrials*nFolders,1); % seconds
-trialDuration = zeros(1,1);
-intertrialInterval = zeros(1,1); 
-ns_Photodiode = zeros(1,1); 
-ns_NetworkEvents = zeros(1,1); 
-ns_TTL = zeros(1,1); 
+trialDuration = zeros(nTrials*nFolders,1);
+intertrialInterval = zeros(nTrials*nFolders - nFolders, 1); 
+ns_Photodiode = zeros(nTrials*nFolders,1); 
+ns_NetworkEvents = zeros(2*nTrials*nFolders,1); 
+ns_TTL = zeros(2*nTrials*nFolders,1); 
 pathArray = cell(nFolders, 1); % Cell array used to store save paths
 
 % Initalise structure to hold information regarding 'errors'
@@ -35,6 +35,11 @@ SAMPLE_RATE = 30000; % Sample rate of the acquisition board (30kHz)
 networkEventNo = 1;
 TTL_eventNo = 1;
 photodiode_eventNo = 1; 
+ns_networkEventNo = 1; 
+ns_TTL_eventNo = 1;
+ns_photodiode_eventNo = 1;
+trialDurationNo = 1; 
+intertrialIntervalNo = 1; 
 errorNo = 1;
 
 %Initialise variables
@@ -47,7 +52,7 @@ for i = 1:nFolders
     folderId = num2str(i);     
     for j = 1:size(dirInfo,1) 
         findFolder = strfind(dirInfo(j).name, [folderId '_2018']);
-        if (~isempty(findFolder))
+        if (findFolder == 1)
             pathArray{i, 1} = [saveDirectory  '\' dirInfo(j).name];            
         end 
     end 
@@ -87,7 +92,8 @@ for z = 1:length(pathArray) % Repeat code below for each sub-directory
             eventLength = eventLength + 1; 
         end 
     end 
-
+    
+    fclose(fid); 
     data = char(events); % Convert 8-bit ASCII to characters. 
 
     parsedTimestamps = zeros(size(data,1), 1); 
@@ -111,16 +117,33 @@ for z = 1:length(pathArray) % Repeat code below for each sub-directory
     % For each timestamp in 'all_channels.events,' cross-check with timestamps in 
     % 'messages.events' to find a match. If a match is found, add the message at 
     % that timestamp to corresponding row in the cell array 'msgs.' 
+    j = 1; 
+    jLog = 1; 
     for i = 1:length(timestamps)
+        msgFound = 0; 
         if (results(i,1) == 5) % Only check network events and not TTL's
-            for j = 1:length(parsedTimestamps)
+%             for j = 1:length(parsedTimestamps)
+%                 if (results(i,2) == parsedTimestamps(j))
+%                     msgs{i,1} = parsedMsgs{j};
+%                     %break here?
+%                     break
+%                 end 
+%             end
+            while (~msgFound) % an assumption is made that messages arrive in order
                 if (results(i,2) == parsedTimestamps(j))
                     msgs{i,1} = parsedMsgs{j};
-                    %break here?
-                    break
+                    msgFound = 1;
+                    j = j + 1; 
+                    jLog = j;
+                else 
+                    j = j + 1; 
+                end 
+                if (j > length(parsedTimestamps))
+                    msgFound = 1; 
+                    j = jLog + 1; 
                 end 
             end
-         else 
+        else 
             msgs{i,1} = [];       
         end    
     end 
@@ -188,8 +211,15 @@ for z = 1:length(pathArray) % Repeat code below for each sub-directory
             end 
             
             if (results(i,3) == 1) % eventId == 1 denotes rising edge
-                TTL_rising_flag = 1;
+                TTL_rising_flag = TTL_rising_flag + 1;
             end
+            
+            if (TTL_rising_flag > 1 && results(i,3) == 1)
+                e(errorNo).Description = 'Missing photodiode';
+                e(errorNo).Subfolder = pathArray{z}; 
+                e(errorNo).Photodiode = TTL_eventNo; % beforeFrame TTL at which photodiode went missing
+                errorNo = errorNo + 1; 
+            end 
             
             TTL_eventNo = TTL_eventNo + 1;
 
@@ -210,7 +240,7 @@ for z = 1:length(pathArray) % Repeat code below for each sub-directory
             
             TTL_rising_flag = 0; %Do not log photodiode pulses until another TTL is found
             photodiode_eventNo = photodiode_eventNo + 1;
-           
+            
         end
 
         % Separate photodiode digital pulses (channel #2) into individal array
@@ -223,8 +253,8 @@ for z = 1:length(pathArray) % Repeat code below for each sub-directory
 %             photodiode_eventNo = photodiode_eventNo + 1;
 %             networkEventFlag = 0; %Do not log photodiode pulses until another network event is found
 %         end
-    end 
-
+    end  
+    
 % Method 2 of finding photodiode pulses
 %     TTL_num = find(eventChannel == 1); % Array containing indices of TTL events
 %     diff_TTL_num = diff(TTL_num); % Number of array elements between TTL events
@@ -258,87 +288,160 @@ for z = 1:length(pathArray) % Repeat code below for each sub-directory
         diff_TTL = diff(TTL); 
         
         %Pick out trialDurations (every odd index) 
-        for k = 1:2:length(diff_TTL) 
-                trialDuration(1,end+1) = diff_TTL(k,1);
+        for i = 1:2:length(diff_TTL) 
+                trialDuration(trialDurationNo) = diff_TTL(i,1);
+                trialDurationNo = trialDurationNo + 1; 
         end 
         
         %Pick out intertrial intevals (every even index)
         for j = 2:2:length(diff_TTL)
             if (mod(j,2*nTrials) ~= 0) %Skip/omit the inter-trial interval between experiments
-                intertrialInterval(1,end+1) = diff_TTL(j,1);
+                intertrialInterval(intertrialIntervalNo) = diff_TTL(j,1);
+                intertrialIntervalNo = intertrialIntervalNo + 1; 
             end
         end 
         
-        %Remove first zero generated by initialisation
-        trialDuration = trialDuration(1,2:end); 
-        intertrialInterval = intertrialInterval(1,2:end);
-        
         figure(2)
-        plot(1:length(trialDuration), trialDuration, 1:length(intertrialInterval), intertrialInterval); 
+        plot(1:length(trialDuration), trialDuration*10^3, 1:length(intertrialInterval), intertrialInterval*10^3); 
         title('Trial durations and inter-trial intervals'); 
         xlabel('Trial or inter-trial interval number')
-        ylabel('Duration (s)')
-        legend('Trial duration', 'Inter-trial interval');
+        ylabel('Duration (ms)')
+        legend('Trial duration', 'Inter-trial interval');                       
         
-        if (isequal(TTL,sort(TTL)))
-            disp('Success: TTL''s arrived in order'); 
-        else 
-            disp('Warning: TTL''s did not arrive in order'); 
-        end 
-        if (isequal(photodiode, sort(photodiode)))
-            disp('Success: Photodiode pulses arrived in order'); 
-        else 
-            disp('Warning: Photodiode pulses did not arrive in order');
-        end  
+        if (~isequal(TTL,sort(TTL)))
+        disp('Warning: TTL''s did not arrive in order');               
+        end
+        if (~isequal(photodiode, sort(photodiode)))
+            disp('Warning: Photodiode pulses did not arrive in order');                    
+        end
         
         if (importNSData) 
-            load([saveDirectory '\' nsFilename], 'paramLog'); % Implement exist()  
+            load([saveDirectory '\' nsFilename], 'paramLog', 'latencyStruct'); % Implement exist()  
             
             % Extract neurostim times for stimulus onset
+            trialNum = 1; 
             for i = 1:length(paramLog(1).data)
-                if (paramLog(1).data{i} ~= Inf)
-                   ns_Photodiode(end+1, 1) = paramLog(1).time(i); 
+                if (paramLog(1).trialTime(i) > 0 && paramLog(1).trial(i) == trialNum) % photodiode pulses occur after trial start
+                   ns_Photodiode(ns_photodiode_eventNo) = paramLog(1).time(i);
+                   ns_photodiode_eventNo = ns_photodiode_eventNo + 1; 
+                   trialNum = trialNum + 1;
+                   if (trialNum == nTrials + 1)
+                       trialNum = 1; 
+                   end 
                 end 
             end 
             
+             if (ns_photodiode_eventNo ~= nTrials*nFolders + 1)
+                e(errorNo).Description = 'Missing Neurostim photodiode';                
+                e(errorNo).TrialNum = ns_photodiode_eventNo; 
+                errorNo = errorNo + 1;
+             end 
+            
             % Extract neurostim times for network events
+            trialNum = 1; 
+            signalEdge = 1;
+            instancesFound = 0; 
             for i = 1:length(paramLog(2).data)
-                if (~isnan(paramLog(2).data{i})) % Implement error checking...whether rise, fall, rise ,fall
-                    ns_NetworkEvents(end+1, 1) = paramLog(2).time(i);                     
+                if (paramLog(2).data{i} == signalEdge && paramLog(2).trial(i) == trialNum) 
+                    ns_NetworkEvents(ns_networkEventNo) = paramLog(2).time(i);
+                    ns_networkEventNo = ns_networkEventNo + 1;
+                    signalEdge = ~signalEdge;
+                    instancesFound = instancesFound + 1; 
+                    if (instancesFound == 2) 
+                        trialNum = trialNum + 1;
+                        instancesFound = 0; 
+                    end
+                    if (trialNum == nTrials + 1) 
+                        trialNum = 1; 
+                    end 
                 end 
+            end 
+            
+            if (ns_networkEventNo ~= 2*nTrials*nFolders + 1) 
+                e(errorNo).Description = 'Missing Neurostim network event';
+                e(errorNo).TrialNum = ns_networkEventNo; 
+                errorNo = errorNo + 1; 
             end 
             
             % Extract neurostim times for TTL's
+            trialNum = 1; 
+            signalEdge = 1;
+            instancesFound = 0; 
             for i = 1:length(paramLog(3).data)
-                if (~isnan(paramLog(3).data{i})) % Implement error checking...whether rise, fall, rise ,fall
-                    ns_TTL(end+1, 1) = paramLog(3).time(i);                     
+                if (paramLog(3).data{i} == signalEdge && paramLog(3).trial(i) == trialNum) % Implement error checking...whether rise, fall, rise ,fall
+                    ns_TTL(ns_TTL_eventNo) = paramLog(3).time(i);
+                    ns_TTL_eventNo = ns_TTL_eventNo + 1; 
+                    signalEdge = ~signalEdge;
+                    instancesFound = instancesFound + 1; 
+                    if (instancesFound == 2) 
+                        trialNum = trialNum + 1;
+                        instancesFound = 0; 
+                    end 
+                    if (trialNum == nTrials + 1) 
+                        trialNum = 1; 
+                    end 
                 end 
             end 
             
-            %Remove first zero generated by initalisation 
-            ns_Photodiode = ns_Photodiode(2:end); 
-            ns_NetworkEvents = ns_NetworkEvents(2:end); 
-            ns_TTL = ns_TTL(2:end); 
+           if (ns_TTL_eventNo ~= 2*nTrials*nFolders + 1) 
+               e(errorNo).Description = 'Missing Neurostim TTL'; 
+               e(errorNo).TrialNum = ns_TTL_eventNo; 
+               errorNo = errorNo + 1; 
+           end 
+           
+            % Re-align events within each trial to the time of the photodiode pulse
+            offsetArray = repelem(photodiode,2);
+            networkEvents_offset = networkEvents - offsetArray;
+            TTL_offset = TTL - offsetArray;     
+                       
+            ns_offsetArray = repelem(ns_Photodiode,2);
+            ns_networkEvents_offset = (ns_NetworkEvents - ns_offsetArray)*10^-3; 
+            ns_TTL_offset = (ns_TTL - ns_offsetArray)*10^-3; 
             
-            %Clock synchronisation between Neurostim and Open Ephys 
-            diode2TTL_interval = TTL(3:2:end) - photodiode(1:end-1); % Disregard first TTL and take every rising TTL after that
-            ns_diode2TTL_interval = ns_TTL(3:2:end) - ns_Photodiode(1:end-1);
-            diode2TTL_interval = [diode2TTL_interval ; TTL(end) - photodiode(end)]; % Append the last interval because there is no beforeTrial
-            ns_diode2TTL_interval = [ns_diode2TTL_interval ; ns_TTL(end) - ns_Photodiode(end)];
-            
-            conversionFactor = ns_diode2TTL_interval ./ diode2TTL_interval; %Number of Neurostim clock units per Open Ephys second
-            
-            %Convert network events from Open Ephys to neurostim clock
-            repeated_conversionFactor = repelem(conversionFactor,2); % One conversion factor to every 2 network events 
-            sync_networkEvents = repeated_conversionFactor(1:end-1) .* networkEvents(2:end); %Disregard first networkEvent because it isn't synchronisable
-            
-            sync_latency = abs(sync_networkEvents - ns_NetworkEvents(2:end)); 
-            
-            figure(3) 
-            plot(sync_latency)
-            title('Network event delay');
+            figure(3)
+            ns_latency = abs(networkEvents_offset - ns_networkEvents_offset)*10^3;
+            plot(ns_latency); 
+            title('Network event latency (Neurostim clock)'); 
             xlabel('Event no.'); 
-            ylabel('Delay (Neurostim clock units)'); 
+            ylabel('Latency (ms)')
+            
+            figure(4) 
+            plot(abs(TTL_offset - ns_networkEvents_offset)*10^3);
+            title('Time difference between Neurostim network event and Open Ephys TTL')
+            xlabel('Event no.'); 
+            ylabel('Latency (ms)');
+            
+            figure(5)
+            plot(abs(TTL_offset - ns_TTL_offset)*10^3); 
+            title('TTL latency');
+            xlabel('Event no.'); 
+            ylabel('Latency (ms)'); 
+            
+            figure(6)
+            plot(abs(((ns_Photodiode - ns_TTL(2:2:end))*10^-3) - (photodiode - TTL(2:2:end))))
+            title('Photodiode latency'); 
+            xlabel('Event no.'); 
+            ylabel('Latency (s)');
+            
+%             %Clock synchronisation between Neurostim and Open Ephys 
+%             diode2TTL_interval = TTL(3:2:end) - photodiode(1:end-1); % Disregard first TTL and take every rising TTL after that
+%             ns_diode2TTL_interval = ns_TTL(3:2:end) - ns_Photodiode(1:end-1);
+%             diode2TTL_interval = [diode2TTL_interval ; TTL(end) - photodiode(end)]; % Append the last interval because there is no beforeTrial
+%             ns_diode2TTL_interval = [ns_diode2TTL_interval ; ns_TTL(end) - ns_Photodiode(end)];
+%             
+%             conversionFactor = ns_diode2TTL_interval ./ diode2TTL_interval; %Number of Neurostim clock units per Open Ephys second
+%             
+%             %Convert network events from Open Ephys to neurostim clock
+%             repeated_conversionFactor = repelem(conversionFactor,2); % One conversion factor to every 2 network events 
+%             sync_networkEvents = repeated_conversionFactor(1:end-1) .* networkEvents(2:end); %Disregard first networkEvent because it isn't synchronisable
+%             
+%             sync_latency = abs(sync_networkEvents - ns_NetworkEvents(2:end)); 
+%             
+%             figure(3) 
+%             plot(sync_latency)
+%             title('Network event delay');
+%             xlabel('Event no.'); 
+%             ylabel('Delay (Neurostim clock units)'); 
         end 
         
         outputState = 1; 
@@ -346,6 +449,10 @@ for z = 1:length(pathArray) % Repeat code below for each sub-directory
     
     if (~outputState && finalFolder) % give user feedback in the command window 
         disp('Errors encountered...plots will not be generated');
+    elseif (~isempty(e(1).Description) && finalFolder)
+        disp('Error encountered');
+    elseif (finalFolder) 
+        disp('Analysis completed...'); 
     end 
     
     if (save2xls) 
