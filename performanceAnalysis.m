@@ -1,6 +1,6 @@
-% Calculates and plots the latency between network events and TTL signals.
+% Calculates and plots the latency of network events 
 % Generates an excel file containing event information (event type, timestamp,
-% and message).
+% event channel, rising/falling edge and message).
 % Execution time is approx. 1 minute per 10,000 trials, tested on Intel Core m3-6Y30
 % Alan Ly, 2018
 
@@ -9,20 +9,20 @@ clear all; close all; clc;
 % Input parameters
 nTrials = 1000;
 nFolders = 100;
-saveDirectory = 'C:\OpenEphys\Experiment5-long\08082018'; % Parent folder under which sub-folders are located
+saveDirectory = 'C:\OpenEphys\Experiment5-long\08082018'; % Parent folder under which Open Ephys recording sub-folders are located
 save2xls = false; % Output results to excel, adds overhead to execution time 
 importNSData = true; % Import Neurostim data and perform clock sync 
-nsFilename = 'results08082018.mat'; % Filename of .mat file containing Neurostim data
+nsFilename = 'results08082018.mat'; % Filename of .mat file containing Neurostim experiment data
 
 % Preallocate memory for arrays
 networkEvents = zeros(2*nTrials*nFolders,1); % seconds
 TTL = zeros(2*nTrials*nFolders,1); % seconds
 photodiode = zeros(nTrials*nFolders,1); % seconds
-trialDuration = zeros(nTrials*nFolders,1);
-intertrialInterval = zeros(nTrials*nFolders - nFolders, 1); 
-ns_Photodiode = zeros(nTrials*nFolders,1); 
-ns_NetworkEvents = zeros(2*nTrials*nFolders,1); 
-ns_TTL = zeros(2*nTrials*nFolders,1); 
+trialDuration = zeros(nTrials*nFolders,1); % seconds
+intertrialInterval = zeros(nTrials*nFolders - nFolders, 1); % seconds
+ns_Photodiode = zeros(nTrials*nFolders,1); % ms 
+ns_NetworkEvents = zeros(2*nTrials*nFolders,1); % ms 
+ns_TTL = zeros(2*nTrials*nFolders,1);  % ms 
 pathArray = cell(nFolders, 1); % Cell array used to store save paths
 
 % Initalise structure to hold information regarding 'errors'
@@ -111,6 +111,7 @@ for z = 1:length(pathArray) % Repeat code below for each sub-directory
     end 
 
     % Output the timestamps of TTL's and network events stored in 'all_channels.events'
+    % Function is available at analysis-tools repo of Open Ephys
     [eventChannel, timestamps, info] = load_open_ephys_data('all_channels.events'); 
     results = [info.eventType timestamps info.eventId]; 
 
@@ -122,13 +123,6 @@ for z = 1:length(pathArray) % Repeat code below for each sub-directory
     for i = 1:length(timestamps)
         msgFound = 0; 
         if (results(i,1) == 5) % Only check network events and not TTL's
-%             for j = 1:length(parsedTimestamps)
-%                 if (results(i,2) == parsedTimestamps(j))
-%                     msgs{i,1} = parsedMsgs{j};
-%                     %break here?
-%                     break
-%                 end 
-%             end
             while (~msgFound) % an assumption is made that messages arrive in order
                 if (results(i,2) == parsedTimestamps(j))
                     msgs{i,1} = parsedMsgs{j};
@@ -138,7 +132,7 @@ for z = 1:length(pathArray) % Repeat code below for each sub-directory
                 else 
                     j = j + 1; 
                 end 
-                if (j > length(parsedTimestamps))
+                if (j > length(parsedTimestamps)) % If match not found, break out of loop
                     msgFound = 1; 
                     j = jLog + 1; 
                 end 
@@ -185,7 +179,6 @@ for z = 1:length(pathArray) % Repeat code below for each sub-directory
     end 
 
     % Sort digital pulses by channel number
-%     networkEventFlag = 1;
     TTL_rising_flag = 0; % Initialise TTL_rising_flag to prevent error when TTL is missing 
     for i = 1:size(results,1)
 
@@ -242,31 +235,8 @@ for z = 1:length(pathArray) % Repeat code below for each sub-directory
             photodiode_eventNo = photodiode_eventNo + 1;
             
         end
-
-        % Separate photodiode digital pulses (channel #2) into individal array
-%         if (results(i,1) == 5) 
-%             networkEventFlag = 1; 
-%         end 
-%         % If network event has been encountered, log the next photodiode digital pulse 
-%         if (results(i,1) == 3 && eventChannel(i) == 2 && networkEventFlag) 
-%             photodiode(photodiode_eventNo) = results(i,2);
-%             photodiode_eventNo = photodiode_eventNo + 1;
-%             networkEventFlag = 0; %Do not log photodiode pulses until another network event is found
-%         end
     end  
-    
-% Method 2 of finding photodiode pulses
-%     TTL_num = find(eventChannel == 1); % Array containing indices of TTL events
-%     diff_TTL_num = diff(TTL_num); % Number of array elements between TTL events
-%     for i = 1:length(TTL_num) 
-%         for j = 1:diff_TTL_num(i)-1
-%             if (eventChannel(TTL_num(i+1)) == 2) 
-%                 %Log timestamp of photodiode pulse if it follows a TTL
-%                 photodiode(photodiode_eventNo) = results(i+1, 2); 
-%                 photodiode_eventNo = photodiode_eventNo + 1; 
-%             end            
-%         end 
-%     end 
+
     
     %Conditions for executing code that generates outputs
     finalFolder = z == length(pathArray); 
@@ -276,7 +246,7 @@ for z = 1:length(pathArray) % Repeat code below for each sub-directory
     if (finalFolder && sameLength && errorless) %Only compute outputs if the outer loop is on the final folder 
 
         %Caculate and plot message-TTL latencies
-        latency = abs(networkEvents - TTL);
+        latency = abs(networkEvents - TTL); 
 
         figure(1)
         plot(1:length(networkEvents), latency*10^3);
@@ -397,13 +367,15 @@ for z = 1:length(pathArray) % Repeat code below for each sub-directory
             ns_offsetArray = repelem(ns_Photodiode,2);
             ns_networkEvents_offset = (ns_NetworkEvents - ns_offsetArray)*10^-3; 
             ns_TTL_offset = (ns_TTL - ns_offsetArray)*10^-3; 
+ 
             
             figure(3)
             ns_latency = abs(networkEvents_offset - ns_networkEvents_offset)*10^3;
             plot(ns_latency); 
-            title('Network event latency (Neurostim clock)'); 
+            title('Latency of network messages'); 
             xlabel('Event no.'); 
             ylabel('Latency (ms)')
+            
             
             figure(4) 
             plot(abs(TTL_offset - ns_networkEvents_offset)*10^3);
@@ -422,26 +394,6 @@ for z = 1:length(pathArray) % Repeat code below for each sub-directory
             title('Photodiode latency'); 
             xlabel('Event no.'); 
             ylabel('Latency (s)');
-            
-%             %Clock synchronisation between Neurostim and Open Ephys 
-%             diode2TTL_interval = TTL(3:2:end) - photodiode(1:end-1); % Disregard first TTL and take every rising TTL after that
-%             ns_diode2TTL_interval = ns_TTL(3:2:end) - ns_Photodiode(1:end-1);
-%             diode2TTL_interval = [diode2TTL_interval ; TTL(end) - photodiode(end)]; % Append the last interval because there is no beforeTrial
-%             ns_diode2TTL_interval = [ns_diode2TTL_interval ; ns_TTL(end) - ns_Photodiode(end)];
-%             
-%             conversionFactor = ns_diode2TTL_interval ./ diode2TTL_interval; %Number of Neurostim clock units per Open Ephys second
-%             
-%             %Convert network events from Open Ephys to neurostim clock
-%             repeated_conversionFactor = repelem(conversionFactor,2); % One conversion factor to every 2 network events 
-%             sync_networkEvents = repeated_conversionFactor(1:end-1) .* networkEvents(2:end); %Disregard first networkEvent because it isn't synchronisable
-%             
-%             sync_latency = abs(sync_networkEvents - ns_NetworkEvents(2:end)); 
-%             
-%             figure(3) 
-%             plot(sync_latency)
-%             title('Network event delay');
-%             xlabel('Event no.'); 
-%             ylabel('Delay (Neurostim clock units)'); 
         end 
         
         outputState = 1; 
